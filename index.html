@@ -17,7 +17,6 @@
         .lesson-content { display: none; }
         .lesson-content.active { display: block; }
         #adminPanel form button[type="submit"]:disabled { background-color: #9ca3af; cursor: not-allowed;}
-        /* Estilo para indicar carga */
         .loading-overlay { position: fixed; inset: 0; background-color: rgba(255, 255, 255, 0.8); display: flex; align-items: center; justify-content: center; z-index: 9999; }
         .loading-spinner { border: 4px solid #f3f3f3; border-top: 4px solid #667eea; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -25,11 +24,10 @@
 </head>
 <body class="bg-gray-50 min-h-screen">
     <!-- Overlay de Carga -->
-    <div id="loadingOverlay" class="loading-overlay" style="display: none;"> <!-- Oculto por defecto -->
+    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
         <div class="loading-spinner"></div>
         <p class="ml-4 text-gray-700 font-semibold">Cargando datos...</p>
     </div>
-
     <!-- Header -->
     <header class="gradient-bg text-white shadow-lg sticky top-0 z-40">
         <div class="container mx-auto px-6 py-4">
@@ -136,7 +134,6 @@
             console.log("initializeApp OK.");
             db = getFirestore(app);
             console.log("getFirestore OK.");
-            // Habilita la red explícitamente y luego marca como inicializado
             enableNetwork(db).then(() => {
                 console.log("Red de Firestore habilitada explícitamente.");
                 firebaseInitialized = true; // MARCAR COMO LISTO AQUÍ
@@ -144,15 +141,13 @@
                 document.dispatchEvent(new CustomEvent('firebaseReady')); // Avisar que está listo
             }).catch(error => {
                 console.error("Error habilitando red de Firestore, se intentará operar offline:", error);
-                // AÚN ASÍ MARCAR COMO INICIALIZADO para intentar funciones offline/cache
-                firebaseInitialized = true;
+                firebaseInitialized = true; // Aún así marca como inicializado
                 document.dispatchEvent(new CustomEvent('firebaseReady'));
             });
         } catch (error) {
             console.error("Error FATAL inicializando Firebase:", error);
             alert("Error CRÍTICO de configuración de Firebase. La aplicación no puede funcionar. Revisa la consola (F12).");
              showLoadingOverlay(false);
-             // Dispara el evento igual para que DOMContentLoaded no se quede esperando
              document.dispatchEvent(new CustomEvent('firebaseReady'));
         }
 
@@ -163,27 +158,34 @@
         let currentAnimations = [];
         let animationsCollectionRef;
 
-        // Espera a que Firebase esté listo antes de definir la ref
         document.addEventListener('firebaseReady', () => {
             if (firebaseInitialized && db) {
-                try {
-                    animationsCollectionRef = collection(db, "animations");
-                    console.log("Referencia a la colección 'animations' creada POST firebaseReady.");
-                } catch(e) {
-                     console.error("Error creando referencia a la colección POST firebaseReady:", e);
-                     alert("Error creando referencia a la base de datos.");
-                     firebaseInitialized = false; // Marcar como fallido si no se puede crear la ref
-                }
-            } else {
-                 console.error("Evento firebaseReady disparado, pero DB no inicializada correctamente.");
-                 firebaseInitialized = false; // Asegurar que esté false si db falló
-            }
-            // Llama a la inicialización de la UI aquí
-            initializeUI();
+                try { animationsCollectionRef = collection(db, "animations"); console.log("Ref. a colección 'animations' creada."); }
+                catch(e) { console.error("Error creando ref. a colección:", e); alert("Error creando ref. a DB."); firebaseInitialized = false; }
+            } else { console.error("FirebaseReady pero DB no inicializada."); firebaseInitialized = false; }
+            initializeUI(); // Llama a la inicialización de la UI aquí
         });
 
 
-        async function initializeDatabase() { /* ... (Sin cambios respecto a V3) */ }
+        async function initializeDatabase() {
+            if (!firebaseInitialized || !db || !animationsCollectionRef) { console.error("initializeDatabase: Firebase o ref. no disponibles."); showLoadingOverlay(false); return []; }
+            console.log("initializeDatabase: Leyendo datos de Firestore...");
+            showLoadingOverlay(true, "Cargando animaciones...");
+            try {
+                const q = query(animationsCollectionRef, orderBy("title"));
+                const querySnapshot = await getDocs(q);
+                currentAnimations = [];
+                querySnapshot.forEach(docSnap => { currentAnimations.push({ id: docSnap.id, ...docSnap.data() }); });
+                console.log(`initializeDatabase: ${currentAnimations.length} animaciones cargadas.`);
+            } catch (error) {
+                console.error("Error obteniendo animaciones de Firestore:", error.code, error.message);
+                if (error.code === 'unavailable') { alert(`No se pudo conectar a la base de datos (${error.code}). Verifica tu conexión.`); }
+                else { alert(`Error al cargar: ${error.message} (Código: ${error.code}). Revisa reglas.`); }
+                currentAnimations = [];
+            } finally { showLoadingOverlay(false); }
+            return currentAnimations;
+        }
+
         function createAnimationCard(animation) { /* ... (Sin cambios) */ }
         function renderAllViews() { /* ... (Sin cambios) */ }
         function showSection(sectionName) { /* ... (Sin cambios) */ }
@@ -198,27 +200,43 @@
         function filterAnimations() { /* ... (Sin cambios) */ }
         function filterBySubject(subject, event) { /* ... (Sin cambios) */ }
 
-        // --- toggleAdminPanel CORREGIDO ---
+        // --- toggleAdminPanel CON MÁS DEPURACIÓN ---
         function toggleAdminPanel() {
-            console.log("toggleAdminPanel: Botón presionado."); // DEBUG
-            console.log("toggleAdminPanel: firebaseInitialized =", firebaseInitialized); // DEBUG
+            console.log("toggleAdminPanel: Se hizo clic en el botón."); // DEBUG
+            console.log("toggleAdminPanel: Estado firebaseInitialized =", firebaseInitialized); // DEBUG
             // Verifica si Firebase está REALMENTE listo antes de continuar
-            if (!firebaseInitialized || !db || !animationsCollectionRef) {
-                 alert("Firebase no está conectado o inicializado correctamente. No se puede abrir el panel.");
-                 console.error("toggleAdminPanel: Intento de abrir panel pero Firebase no está listo (db o ref falló)."); // DEBUG
+            if (!firebaseInitialized) {
+                 alert("Firebase todavía se está inicializando o hubo un error. Intenta de nuevo en unos segundos.");
+                 console.error("toggleAdminPanel: Intento de abrir panel pero Firebase no está listo (firebaseInitialized=false)."); // DEBUG
                  return; // Detiene la ejecución si Firebase falló
             }
+             if (!db) {
+                 alert("Error crítico: La conexión a la base de datos (db) no está disponible.");
+                 console.error("toggleAdminPanel: db es null o undefined."); // DEBUG
+                 return;
+             }
+             if (!animationsCollectionRef) {
+                 alert("Error crítico: La referencia a la colección de animaciones no está disponible.");
+                 console.error("toggleAdminPanel: animationsCollectionRef es null o undefined."); // DEBUG
+                 return;
+             }
+
             const panel = document.getElementById('adminPanel');
             if (!panel) {
-                console.error("toggleAdminPanel: Elemento 'adminPanel' no encontrado."); // DEBUG
+                console.error("toggleAdminPanel: Elemento 'adminPanel' no encontrado en el DOM."); // DEBUG
                 return;
             }
+
+            // Intenta mostrar el panel ANTES de cargar los datos
             panel.classList.toggle('hidden');
             console.log("toggleAdminPanel: Clase 'hidden' cambiada. Visible:", !panel.classList.contains('hidden')); // DEBUG
+
             if (!panel.classList.contains('hidden')) {
-                 console.log("toggleAdminPanel: Panel visible, cargando animaciones existentes..."); // DEBUG
+                 console.log("toggleAdminPanel: Panel visible, intentando cargar animaciones existentes..."); // DEBUG
                  loadExistingAnimations(); // Carga desde Firestore
                  resetAdminForm(); // Asegura que el form esté limpio al abrir
+            } else {
+                 console.log("toggleAdminPanel: Panel ocultado."); // DEBUG
             }
         }
 
@@ -237,41 +255,31 @@
 
         // Función separada para inicializar la UI después de que Firebase esté listo
         async function initializeUI() {
-            console.log("initializeUI: Iniciando..."); // DEBUG
+            console.log("initializeUI: Iniciando...");
             showLoadingOverlay(true, "Inicializando UI...");
-
             const savedContent = JSON.parse(localStorage.getItem('siteContent') || '{}');
             loadSiteContent(savedContent);
-
-            // Solo inicializa DB y renderiza si Firebase está marcado como listo
             if (firebaseInitialized) {
-                try {
-                    await initializeDatabase(); // Carga inicial de datos
-                    renderAllViews(); // Renderiza todo con los datos cargados
-                } catch (e) { console.error("Error durante initializeUI:", e); }
+                try { await initializeDatabase(); renderAllViews(); }
+                catch (e) { console.error("Error durante initializeUI:", e); }
                  finally { showLoadingOverlay(false); }
             } else {
-                 console.warn("initializeUI: Firebase no inicializado. Renderizando vistas vacías.");
-                 renderAllViews(); // Renderizar vacío o con mensaje de error si aplica
-                 alert("No se pudo conectar con Firebase. Las animaciones no se cargarán.");
+                 console.warn("initializeUI: Firebase no inicializado."); renderAllViews();
+                 // alert("No se pudo conectar con Firebase."); // Movido al listener 'firebaseReady'
                  showLoadingOverlay(false);
             }
-            
             const urlParams = new URLSearchParams(window.location.search);
             const animacionParaCargar = urlParams.get('animacion');
             if (animacionParaCargar) { loadAnimationById(animacionParaCargar); }
             else { showSection('inicio'); }
-            
             const addAnimationForm = document.getElementById('addAnimationForm');
             if(addAnimationForm) {
-                 // El listener del formulario se mantiene igual que en V3
                 addAnimationForm.addEventListener('submit', async function(e) { /* ... (código sin cambios) */ });
             } else { console.error("initializeUI: Formulario addAnimationForm no encontrado."); }
-            
-            console.log("initializeUI: Fin."); // DEBUG
+            console.log("initializeUI: Fin.");
         }
 
-        // NO llames a initializeUI directamente aquí, espera al evento 'firebaseReady'
+        // --- NO llames a initializeUI directamente aquí ---
 
         // Hacer funciones globales accesibles desde el HTML (onclick)
         window.showSection = showSection; window.toggleMobileMenu = toggleMobileMenu; window.loadAnimationById = loadAnimationById; window.showLessonTab = showLessonTab; window.toggleFullscreen = toggleFullscreen; window.resetAnimation = resetAnimation; window.shareAnimation = shareAnimation; window.downloadNotes = downloadNotes; window.filterAnimations = filterAnimations; window.filterBySubject = filterBySubject; window.toggleAdminPanel = toggleAdminPanel; window.showAdminTab = showAdminTab; window.editAnimation = editAnimation; window.deleteAnimation = deleteAnimation; window.resetAdminForm = resetAdminForm;
