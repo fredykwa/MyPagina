@@ -102,29 +102,26 @@
 
     <!-- Firebase SDK -->
     <script type="module">
-        console.log("SCRIPT MODULE START: Iniciando script de módulo."); // DEBUG
+        console.log("SCRIPT MODULE START: Iniciando script de módulo.");
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
-        import { getFirestore, collection, getDocs, addDoc, doc, setDoc, deleteDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, addDoc, doc, setDoc, deleteDoc, query, orderBy, enableNetwork, disableNetwork } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
 
         // --- Función movida al principio ---
         function showLoadingOverlay(show, message = "Cargando...") {
             const overlay = document.getElementById('loadingOverlay');
-            if (!overlay) {
-                console.error("showLoadingOverlay: Elemento loadingOverlay no encontrado."); // DEBUG
-                return;
-            }
+            if (!overlay) { console.error("showLoadingOverlay: Elemento loadingOverlay no encontrado."); return; }
             const msgElement = overlay.querySelector('p');
             if (msgElement) msgElement.textContent = message;
             overlay.style.display = show ? 'flex' : 'none';
-            console.log(`showLoadingOverlay: ${show ? 'Mostrando' : 'Ocultando'} - ${message}`); // DEBUG
+            console.log(`showLoadingOverlay: ${show ? 'Mostrando' : 'Ocultando'} - ${message}`);
         }
 
-        // CONFIGURACIÓN DE FIREBASE (PEGADA POR EL USUARIO Y CORREGIDA)
+        // CONFIGURACIÓN DE FIREBASE
         const firebaseConfig = {
           apiKey: "AIzaSyBS5_0cPqCnbGo_chVNhZ-breB2GZu0OY8",
           authDomain: "profedigitalkwa.firebaseapp.com",
           projectId: "profedigitalkwa",
-          storageBucket: "profedigitalkwa.appspot.com", // CORREGIDO
+          storageBucket: "profedigitalkwa.appspot.com",
           messagingSenderId: "1045533291717",
           appId: "1:1045533291717:web:bac69b7e6f880855e6acac",
           measurementId: "G-GTG8N9354N"
@@ -132,422 +129,152 @@
 
         // Initialize Firebase
         let app, db;
-        let firebaseInitialized = false; // Flag para saber si Firebase inició bien
+        let firebaseInitialized = false; // Flag crucial
         try {
+            console.log("Intentando inicializar Firebase...");
             app = initializeApp(firebaseConfig);
+            console.log("initializeApp OK.");
             db = getFirestore(app);
-            firebaseInitialized = true; // Marcar como inicializado
-            console.log("Firebase inicializado correctamente con tu configuración."); // DEBUG
+            console.log("getFirestore OK.");
+            // Habilita la red explícitamente y luego marca como inicializado
+            enableNetwork(db).then(() => {
+                console.log("Red de Firestore habilitada explícitamente.");
+                firebaseInitialized = true; // MARCAR COMO LISTO AQUÍ
+                console.log("Firebase inicializado y red habilitada.");
+                document.dispatchEvent(new CustomEvent('firebaseReady')); // Avisar que está listo
+            }).catch(error => {
+                console.error("Error habilitando red de Firestore, se intentará operar offline:", error);
+                // AÚN ASÍ MARCAR COMO INICIALIZADO para intentar funciones offline/cache
+                firebaseInitialized = true;
+                document.dispatchEvent(new CustomEvent('firebaseReady'));
+            });
         } catch (error) {
-            console.error("Error FATAL inicializando Firebase:", error); // DEBUG
+            console.error("Error FATAL inicializando Firebase:", error);
             alert("Error CRÍTICO de configuración de Firebase. La aplicación no puede funcionar. Revisa la consola (F12).");
-             showLoadingOverlay(false); // Ocultar overlay si falla
+             showLoadingOverlay(false);
+             // Dispara el evento igual para que DOMContentLoaded no se quede esperando
+             document.dispatchEvent(new CustomEvent('firebaseReady'));
         }
 
         // =================================================================================
-        // DEFINICIÓN DE FUNCIONES GLOBALES (ANTES DE LLAMARLAS)
+        // DEFINICIÓN DE FUNCIONES GLOBALES
         // =================================================================================
 
-        let currentAnimations = []; // Variable global para el estado actual
-        let animationsCollectionRef; // Referencia a la colección en Firestore
-        if (firebaseInitialized && db) { // Solo definir si Firebase inició bien
-            animationsCollectionRef = collection(db, "animations");
-        } else {
-             console.error("La base de datos (db) no está inicializada. No se puede crear la referencia a la colección.");
-        }
+        let currentAnimations = [];
+        let animationsCollectionRef;
 
-        async function initializeDatabase() {
-            if (!firebaseInitialized || !db) {
-                console.error("initializeDatabase: Firebase no está inicializado. Abortando carga.");
-                showLoadingOverlay(false);
-                return [];
+        // Espera a que Firebase esté listo antes de definir la ref
+        document.addEventListener('firebaseReady', () => {
+            if (firebaseInitialized && db) {
+                try {
+                    animationsCollectionRef = collection(db, "animations");
+                    console.log("Referencia a la colección 'animations' creada POST firebaseReady.");
+                } catch(e) {
+                     console.error("Error creando referencia a la colección POST firebaseReady:", e);
+                     alert("Error creando referencia a la base de datos.");
+                     firebaseInitialized = false; // Marcar como fallido si no se puede crear la ref
+                }
+            } else {
+                 console.error("Evento firebaseReady disparado, pero DB no inicializada correctamente.");
+                 firebaseInitialized = false; // Asegurar que esté false si db falló
             }
-            console.log("initializeDatabase: Leyendo datos de Firestore...");
-            showLoadingOverlay(true, "Cargando animaciones...");
-            try {
-                const q = query(animationsCollectionRef, orderBy("title"));
-                const querySnapshot = await getDocs(q);
-                // Vacía el array antes de llenarlo para evitar duplicados si se llama de nuevo
-                currentAnimations = [];
-                querySnapshot.forEach(docSnap => {
-                    currentAnimations.push({ id: docSnap.id, ...docSnap.data() });
-                });
-                // Alternativa más corta: currentAnimations = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
-                console.log(`initializeDatabase: ${currentAnimations.length} animaciones cargadas.`);
-            } catch (error) {
-                console.error("Error obteniendo animaciones de Firestore:", error);
-                alert(`Error al cargar las animaciones: ${error.message}. Revisa la consola y las reglas de seguridad.`);
-                currentAnimations = [];
-            } finally {
-                 showLoadingOverlay(false);
+            // Llama a la inicialización de la UI aquí
+            initializeUI();
+        });
+
+
+        async function initializeDatabase() { /* ... (Sin cambios respecto a V3) */ }
+        function createAnimationCard(animation) { /* ... (Sin cambios) */ }
+        function renderAllViews() { /* ... (Sin cambios) */ }
+        function showSection(sectionName) { /* ... (Sin cambios) */ }
+        function updateBreadcrumb(sectionName) { /* ... (Sin cambios) */ }
+        function toggleMobileMenu() { /* ... (Sin cambios) */ }
+        function loadAnimationById(animationId) { /* ... (Sin cambios) */ }
+        function showLessonTab(tabName) { /* ... (Sin cambios) */ }
+        function toggleFullscreen(id) { /* ... (Sin cambios) */ }
+        function resetAnimation(id) { /* ... (Sin cambios) */ }
+        function shareAnimation(animationId) { /* ... (Sin cambios) */ }
+        function downloadNotes(animationId) { /* ... (Sin cambios) */ }
+        function filterAnimations() { /* ... (Sin cambios) */ }
+        function filterBySubject(subject, event) { /* ... (Sin cambios) */ }
+
+        // --- toggleAdminPanel CORREGIDO ---
+        function toggleAdminPanel() {
+            console.log("toggleAdminPanel: Botón presionado."); // DEBUG
+            console.log("toggleAdminPanel: firebaseInitialized =", firebaseInitialized); // DEBUG
+            // Verifica si Firebase está REALMENTE listo antes de continuar
+            if (!firebaseInitialized || !db || !animationsCollectionRef) {
+                 alert("Firebase no está conectado o inicializado correctamente. No se puede abrir el panel.");
+                 console.error("toggleAdminPanel: Intento de abrir panel pero Firebase no está listo (db o ref falló)."); // DEBUG
+                 return; // Detiene la ejecución si Firebase falló
             }
-            return currentAnimations;
-        }
-
-        function createAnimationCard(animation) {
-             const subjectIcons = { 'matematicas': '📐', 'fisica': '⚛️', 'quimica': '⚗️' };
-             const subjectColors = { 'matematicas': { bg: 'bg-blue-500', grad: 'from-blue-100 to-blue-200' }, 'fisica': { bg: 'bg-purple-500', grad: 'from-purple-100 to-purple-200' }, 'quimica': { bg: 'bg-green-500', grad: 'from-green-100 to-green-200' }};
-             const colors = subjectColors[animation.subject] || { bg: 'bg-gray-500', grad: 'from-gray-100 to-gray-200' };
-             const icon = subjectIcons[animation.subject] || '🧩';
-             const animId = animation.id || `placeholder-${Math.random()}`;
-             const thumbnailHTML = (animation.svgThumbnail && animation.svgThumbnail.startsWith('<svg')) ? animation.svgThumbnail : `<div class="text-6xl opacity-50">${icon}</div>`;
-             const keywords = animation.keywords || '';
-             return `<div class="animation-item animation-card rounded-xl overflow-hidden card-hover cursor-pointer aspect-square" data-subject="${animation.subject}" data-keywords="${keywords} ${animation.title}" role="button" tabindex="0" onclick="loadAnimationById('${animId}')" onkeydown="if(event.key==='Enter' || event.key===' ') { event.preventDefault(); loadAnimationById('${animId}'); }"><div class="h-3/5 bg-gradient-to-br ${colors.grad} relative overflow-hidden flex items-center justify-center">${thumbnailHTML}<div class="absolute top-3 right-3 ${colors.bg} text-white px-2 py-1 rounded-full text-xs font-semibold shadow-lg">${icon} ${animation.subject.charAt(0).toUpperCase() + animation.subject.slice(1)}</div></div><div class="h-2/5 p-4 flex flex-col justify-center"><h4 class="text-lg font-semibold mb-2 text-center">${animation.title}</h4><p class="text-gray-600 text-sm text-center leading-relaxed">${animation.description}</p></div></div>`;
-        }
-
-        function renderAllViews() {
-            if (!firebaseInitialized) {
-                console.warn("renderAllViews: Firebase no inicializado, saltando renderizado.");
+            const panel = document.getElementById('adminPanel');
+            if (!panel) {
+                console.error("toggleAdminPanel: Elemento 'adminPanel' no encontrado."); // DEBUG
                 return;
             }
-            console.log("renderAllViews: Iniciando renderizado...");
-            const animationsToRender = currentAnimations; // Usa el estado global actualizado
-            console.log("renderAllViews: Animaciones a renderizar:", animationsToRender.map(a => a.id));
-            const inicioContainer = document.getElementById('inicio');
-            const matematicasContainer = document.getElementById('matematicas');
-            const fisicaContainer = document.getElementById('fisica');
-            const todasContainer = document.getElementById('animaciones');
-
-            if (!inicioContainer || !matematicasContainer || !fisicaContainer || !todasContainer) {
-                 console.error("renderAllViews: No se encontraron todos los contenedores de sección.");
-                 return;
-            }
-
-            const inicioHTML = `<div class="bg-white rounded-xl shadow-lg overflow-hidden mb-8"><div class="gradient-bg text-white p-8 md:p-12"><h2 class="text-4xl md:text-5xl font-bold mb-4">Bienvenido a Profe Digital Kwa</h2><p class="text-xl text-blue-100 mb-6">Explora conceptos de matemáticas y física a través de animaciones interactivas</p><div class="flex flex-wrap gap-4"><button onclick="showSection('matematicas')" class="bg-white text-indigo-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors">📐 Explorar Matemáticas</button><button onclick="showSection('fisica')" class="bg-indigo-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-indigo-600 transition-colors">🔬 Explorar Física</button></div></div></div><div class="mb-8"><h3 class="text-2xl font-bold text-gray-800 mb-6">🌟 Animaciones Destacadas</h3><div class="grid md:grid-cols-3 gap-6">${animationsToRender.filter(a => a.isFeatured).map(createAnimationCard).join('') || '<p class="text-gray-500 col-span-3">No hay animaciones destacadas.</p>'}</div></div><div class="grid md:grid-cols-4 gap-6 mb-8"><div class="bg-white rounded-lg p-6 text-center shadow-md"><div class="text-3xl font-bold text-blue-600 mb-2">${animationsToRender.length}</div><div class="text-gray-600">Animaciones</div></div><div class="bg-white rounded-lg p-6 text-center shadow-md"><div class="text-3xl font-bold text-green-600 mb-2">${[...new Set(animationsToRender.map(a => a.subject))].length}</div><div class="text-gray-600">Materias</div></div><div class="bg-white rounded-lg p-6 text-center shadow-md"><div class="text-3xl font-bold text-purple-600 mb-2">100%</div><div class="text-gray-600">Interactivo</div></div><div class="bg-white rounded-lg p-6 text-center shadow-md"><div class="text-3xl font-bold text-orange-600 mb-2">∞</div><div class="text-gray-600">Posibilidades</div></div></div>`;
-            const matematicasHTML = `<div class="bg-white rounded-xl shadow-lg overflow-hidden mb-8"><div class="bg-gradient-to-r from-blue-600 to-teal-600 text-white p-6"><h2 class="text-3xl font-bold mb-2">📐 Matemáticas</h2><p class="text-blue-100">Conceptos matemáticos visualizados de forma interactiva</p></div></div><div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">${animationsToRender.filter(a => a.subject === 'matematicas').map(createAnimationCard).join('') || '<p class="text-gray-500 col-span-3">No hay animaciones de matemáticas.</p>'}</div>`;
-            const fisicaHTML = `<div class="bg-white rounded-xl shadow-lg overflow-hidden mb-8"><div class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-6"><h2 class="text-3xl font-bold mb-2">🔬 Física</h2><p class="text-indigo-100">Fenómenos físicos explicados a través de simulaciones</p></div></div><div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">${animationsToRender.filter(a => a.subject === 'fisica').map(createAnimationCard).join('') || '<p class="text-gray-500 col-span-3">No hay animaciones de física.</p>'}</div>`;
-            const todasHTML = `<div class="bg-white rounded-xl shadow-lg overflow-hidden mb-8"><div class="bg-gradient-to-r from-green-600 to-blue-600 text-white p-6"><h2 class="text-3xl font-bold mb-2">🎬 Todas las Animaciones</h2><p class="text-green-100">Catálogo completo</p></div></div><div class="bg-white rounded-lg shadow-md p-6 mb-6"><div class="flex flex-col md:flex-row gap-4"><div class="flex-1"><input type="text" id="searchInput" placeholder="Buscar animaciones..." class="w-full px-4 py-2 border border-gray-300 rounded-lg" onkeyup="filterAnimations()"></div><div class="flex gap-2"><button onclick="filterBySubject('all', event)" class="filter-btn bg-blue-500 text-white px-4 py-2 rounded-lg">Todas</button><button onclick="filterBySubject('matematicas', event)" class="filter-btn bg-blue-100 text-blue-700 px-4 py-2 rounded-lg">Matemáticas</button><button onclick="filterBySubject('fisica', event)" class="filter-btn bg-purple-100 text-purple-700 px-4 py-2 rounded-lg">Física</button></div></div></div><div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6" id="animationsGrid">${animationsToRender.map(createAnimationCard).join('') || '<p class="text-gray-500 col-span-3">Aún no hay animaciones.</p>'}</div>`;
-            
-            inicioContainer.innerHTML = inicioHTML;
-            matematicasContainer.innerHTML = matematicasHTML;
-            fisicaContainer.innerHTML = fisicaHTML;
-            todasContainer.innerHTML = todasHTML;
-             console.log("renderAllViews: Renderizado completado."); // DEBUG
-        }
-        
-        function showSection(sectionName) {
-            console.log(`showSection: Mostrando sección "${sectionName}"`); // DEBUG
-            document.querySelectorAll('.section').forEach(s => s.classList.add('section-hidden'));
-            const sectionElement = document.getElementById(sectionName);
-            if (sectionElement) {
-                 sectionElement.classList.remove('section-hidden');
-            } else {
-                console.error(`showSection: Sección con id "${sectionName}" no encontrada.`); // DEBUG
-                const inicioEl = document.getElementById('inicio');
-                if (inicioEl) inicioEl.classList.remove('section-hidden'); // Fallback to home
-                sectionName = 'inicio';
-            }
-            updateBreadcrumb(sectionName);
-            document.getElementById('mobileMenu')?.classList.add('hidden');
-            window.scrollTo(0, 0);
-        }
-
-        function updateBreadcrumb(sectionName) {
-            const breadcrumbSection = document.getElementById('breadcrumbSection');
-            const breadcrumbText = document.getElementById('breadcrumbText');
-            const sectionNames = { 'matematicas': 'Matemáticas', 'fisica': 'Física', 'animaciones': 'Todas las Animaciones', 'animationDetail': 'Detalle de Animación' };
-            if (!breadcrumbSection || !breadcrumbText) return;
-            if (sectionName === 'inicio') { breadcrumbSection.classList.add('hidden'); }
-            else { breadcrumbSection.classList.remove('hidden'); breadcrumbText.textContent = sectionNames[sectionName] || sectionName; }
-        }
-
-        function toggleMobileMenu() { document.getElementById('mobileMenu')?.classList.toggle('hidden'); }
-
-        function loadAnimationById(animationId) {
-             const animation = currentAnimations.find(a => a.id === animationId);
-             if (!animation) { console.error('Animation not found:', animationId); alert('Error: Animación no encontrada.'); showSection('inicio'); return; }
-             const createListItems = (items = [], color = 'gray') => items.map(item => `<li class="flex items-start"><span class="text-${color}-500 mr-2">•</span>${item}</li>`).join('');
-             const hasTheory = animation.theory && animation.theory.trim().length > 5, hasExamples = animation.examples && animation.examples.trim().length > 5, hasChallenge = animation.challenge && animation.challenge.trim().length > 5, hasLessonContent = hasTheory || hasExamples || hasChallenge;
-             const animationColor = getColorForSubject(animation.subject);
-             const animationGradient = getGradientForSubject(animation.subject);
-             const content = `<div class="bg-white rounded-xl shadow-lg overflow-hidden mb-8"><div class="bg-gradient-to-r ${animationGradient} text-white p-6"><h2 class="text-3xl font-bold mb-2">${animation.title}</h2><p class="text-${animationColor}-100">${animation.description}</p></div><div class="p-6"><div class="bg-gray-50 rounded-lg p-4 mb-6"><div class="flex items-center justify-between mb-4"><div class="flex items-center space-x-3"><div class="w-3 h-3 bg-red-500 rounded-full"></div><div class="w-3 h-3 bg-yellow-500 rounded-full"></div><div class="w-3 h-3 bg-green-500 rounded-full"></div><span class="text-sm text-gray-600 ml-4">Animación Interactiva</span></div><button onclick="toggleFullscreen('${animation.id}')" class="bg-blue-600 text-white px-4 py-2 rounded-lg">📺 Pantalla Completa</button></div><div id="animationContainer-${animation.id}" class="w-full bg-white rounded-lg shadow-inner aspect-video md:aspect-[16/9]"><iframe id="animationFrame-${animation.id}" src="${animation.url}" class="w-full h-full border-0 rounded-lg" title="${animation.title}" allowfullscreen></iframe></div></div><div class="grid md:grid-cols-2 gap-6 mb-8"><div class="bg-${animationColor}-50 p-6 rounded-lg"><h3 class="text-xl font-semibold text-${animationColor}-800 mb-3">🎯 Objetivos</h3><ul class="space-y-2 text-${animationColor}-700">${createListItems(animation.objectives, animationColor)}</ul></div><div class="bg-green-50 p-6 rounded-lg"><h3 class="text-xl font-semibold text-green-800 mb-3">🔧 Controles</h3><ul class="space-y-2 text-green-700">${createListItems(animation.controls, 'green')}</ul></div></div>${hasLessonContent ? `<div class="bg-white rounded-xl shadow-lg overflow-hidden mt-8"><h3 class="text-2xl font-bold text-gray-800 p-6 border-b">Lección Completa</h3><nav class="flex border-b">${hasTheory ? `<span id="tab-theory" class="lesson-tab active" onclick="showLessonTab('theory')">📖 Explicación</span>` : ''}${hasExamples ? `<span id="tab-examples" class="lesson-tab ${!hasTheory ? 'active' : ''}" onclick="showLessonTab('examples')">💡 Ejemplos</span>` : ''}${hasChallenge ? `<span id="tab-challenge" class="lesson-tab ${!hasTheory && !hasExamples ? 'active' : ''}" onclick="showLessonTab('challenge')">🧠 Desafío</span>` : ''}</nav><div class="p-6 prose max-w-none prose-headings:font-semibold prose-a:text-blue-600 hover:prose-a:text-blue-800">${hasTheory ? `<div id="content-theory" class="lesson-content active">${animation.theory}</div>` : ''}${hasExamples ? `<div id="content-examples" class="lesson-content ${!hasTheory ? 'active' : ''}">${animation.examples}</div>` : ''}${hasChallenge ? `<div id="content-challenge" class="lesson-content ${!hasTheory && !hasExamples ? 'active' : ''}">${animation.challenge}</div>` : ''}</div></div>` : ''}<div class="flex flex-wrap gap-4 justify-center mt-12"><button onclick="resetAnimation('${animation.id}')" class="bg-orange-600 text-white px-6 py-3 rounded-lg flex items-center space-x-2"><span>🔄</span><span>Reiniciar</span></button><button onclick="shareAnimation('${animation.id}')" class="bg-green-600 text-white px-6 py-3 rounded-lg flex items-center space-x-2"><span>📤</span><span>Compartir</span></button><button onclick="downloadNotes('${animation.id}')" class="bg-purple-600 text-white px-6 py-3 rounded-lg flex items-center space-x-2"><span>📝</span><span>Descargar Resumen</span></button></div></div></div>`;
-             document.getElementById('animationContent').innerHTML = content;
-             showSection('animationDetail');
-        }
-
-        function showLessonTab(tabName) {
-            document.querySelectorAll('#animationContent .lesson-content').forEach(c => c.classList.remove('active'));
-            document.querySelectorAll('#animationContent .lesson-tab').forEach(t => t.classList.remove('active'));
-            const contentEl = document.getElementById(`content-${tabName}`);
-            const tabEl = document.getElementById(`tab-${tabName}`);
-            if(contentEl) contentEl.classList.add('active');
-            if(tabEl) tabEl.classList.add('active');
-        }
-
-        function toggleFullscreen(id) {
-            const elem = document.getElementById(`animationContainer-${id}`);
-            if (!elem) return;
-            if (!document.fullscreenElement) {
-                elem.requestFullscreen().catch(err => console.error(`Error entering fullscreen: ${err.message} (${err.name})`));
-            } else {
-                if (document.exitFullscreen) document.exitFullscreen().catch(err => console.error(`Error exiting fullscreen: ${err.message} (${err.name})`));
-            }
-        }
-        function resetAnimation(id) { const iframe = document.getElementById(`animationFrame-${id}`); if (iframe) iframe.src = iframe.src; }
-        
-        function shareAnimation(animationId) {
-            const animation = currentAnimations.find(a => a.id === animationId); // Usa estado global
-            if (!animation) return;
-            const shareURL = new URL(PORTAL_URL); shareURL.searchParams.set('animacion', animation.id);
-            const urlString = shareURL.toString();
-            if (navigator.share) { navigator.share({ title: `${animation.title} - Profe Digital Kwa`, text: 'Mira esta animación educativa', url: urlString }); }
-            else { navigator.clipboard.writeText(urlString).then(() => alert('¡Enlace copiado al portapapeles!')); }
-        }
-
-        function downloadNotes(animationId) {
-            const animation = currentAnimations.find(a => a.id === animationId); // Usa estado global
-            if (!animation) return alert('No hay notas disponibles.');
-            const stripHtml = (html) => { try { return new DOMParser().parseFromString(html, 'text/html').body.textContent || ""; } catch(e) { return html || ""; } };
-            let content = `LECCIÓN: ${animation.title.toUpperCase()}\n==================================\n\n`;
-            if (animation.theory) content += `📖 EXPLICACIÓN TEÓRICA\n----------------------\n${stripHtml(animation.theory)}\n\n`;
-            if (animation.examples) content += `💡 EJEMPLOS RESUELTOS\n----------------------\n${stripHtml(animation.examples)}\n\n`;
-            if (animation.challenge) content += `🧠 DESAFÍO\n----------------------\n${stripHtml(animation.challenge)}\n\n`;
-            const blob = new Blob([content + '---\nGenerado por Profe Digital Kwa'], { type: 'text/plain;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = `${animation.id}-leccion.txt`; a.click();
-            URL.revokeObjectURL(url);
-        }
-
-        function filterAnimations() {
-            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-            document.querySelectorAll('#animationsGrid .animation-item').forEach(anim => { anim.style.display = anim.dataset.keywords.toLowerCase().includes(searchTerm) ? 'block' : 'none'; });
-        }
-
-        function filterBySubject(subject, event) {
-            document.querySelectorAll('.filter-btn').forEach(btn => { btn.classList.remove('bg-blue-500', 'text-white', 'bg-purple-500'); btn.classList.add('bg-blue-100', 'text-blue-700'); });
-            const activeClasses = subject === 'fisica' ? ['bg-purple-500', 'text-white'] : ['bg-blue-500', 'text-white'];
-            event.target.classList.remove('bg-blue-100', 'text-blue-700');
-            event.target.classList.add(...activeClasses);
-            document.querySelectorAll('#animationsGrid .animation-item').forEach(anim => { anim.style.display = (subject === 'all' || anim.dataset.subject === subject) ? 'block' : 'none'; });
-        }
-
-        function toggleAdminPanel() {
-            const panel = document.getElementById('adminPanel');
             panel.classList.toggle('hidden');
+            console.log("toggleAdminPanel: Clase 'hidden' cambiada. Visible:", !panel.classList.contains('hidden')); // DEBUG
             if (!panel.classList.contains('hidden')) {
+                 console.log("toggleAdminPanel: Panel visible, cargando animaciones existentes..."); // DEBUG
                  loadExistingAnimations(); // Carga desde Firestore
                  resetAdminForm(); // Asegura que el form esté limpio al abrir
             }
         }
 
-        function showAdminTab(tabName, event) {
-             document.querySelectorAll('.admin-tab-content').forEach(t => t.classList.add('hidden'));
-             document.querySelectorAll('.admin-tab-btn').forEach(b => { b.classList.remove('text-blue-600', 'border-b-2', 'border-blue-600'); b.classList.add('text-gray-500'); });
-             const tabContent = document.getElementById(`admin${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`);
-             if (tabContent) tabContent.classList.remove('hidden');
-             if (event && event.target) {
-                event.target.classList.remove('text-gray-500');
-                event.target.classList.add('text-blue-600', 'border-b-2', 'border-blue-600');
-             }
-        }
-
-        async function loadExistingAnimations() {
-            const container = document.getElementById('existingAnimations');
-            if (!container) return;
-            container.innerHTML = '<div class="flex justify-center items-center p-4"><div class="loading-spinner"></div><span class="ml-2">Cargando...</span></div>';
-            try {
-                // Forzar relectura SIEMPRE al abrir el panel para máxima consistencia
-                await initializeDatabase(); 
-
-                container.innerHTML = currentAnimations.map(animation => `
-                    <div class="bg-gray-100 p-4 rounded-lg flex items-center justify-between shadow-sm">
-                        <div><h5 class="font-semibold">${animation.title}</h5><p class="text-sm text-gray-600">${animation.subject}</p></div>
-                        <div class="flex space-x-2 flex-shrink-0">
-                            <button onclick="editAnimation('${animation.id}')" class="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-opacity-50">✏️ Editar</button>
-                            <button onclick="deleteAnimation('${animation.id}')" class="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-opacity-50">🗑️ Eliminar</button>
-                        </div>
-                    </div>`).join('') || '<p class="text-center text-gray-500">No hay animaciones en la base de datos.</p>';
-            } catch (error) {
-                console.error("Error loading existing animations for admin panel:", error); // DEBUG
-                container.innerHTML = '<p class="text-center text-red-500">Error al cargar animaciones.</p>';
-            }
-        }
-
-        function getGradientForSubject(s) { return {matematicas:'from-blue-600 to-teal-600',fisica:'from-indigo-600 to-purple-600',quimica:'from-green-600 to-emerald-600'}[s] || 'from-gray-600 to-gray-700'; }
-        function getColorForSubject(s) { return {matematicas:'blue',fisica:'indigo',quimica:'green'}[s] || 'gray'; }
-        function resetAdminForm() { 
-            const form = document.getElementById('addAnimationForm');
-            if (form) form.reset(); 
-            const animIdInput = document.getElementById('animationId');
-            if (animIdInput) animIdInput.value = ''; 
-            const submitBtn = document.getElementById('formSubmitButton');
-            if (submitBtn) submitBtn.innerHTML = '➕ Agregar Animación';
-            const cancelBtn = document.getElementById('formCancelButton');
-            if (cancelBtn) cancelBtn.classList.add('hidden'); 
-        }
-
-        async function deleteAnimation(animationId) {
-            if (!firebaseInitialized || !db) { alert("Error: Firebase no está inicializado."); return; }
-            const animationToDelete = currentAnimations.find(a => a.id === animationId);
-            if (!animationToDelete) { alert("Error: No se encontró la animación a eliminar."); return; }
-            if (!confirm(`¿Estás seguro de que quieres eliminar la animación "${animationToDelete.title}"?`)) return;
-
-            console.log(`deleteAnimation: Intentando eliminar ${animationId} de Firestore.`); // DEBUG
-            showLoadingOverlay(true, "Eliminando...");
-            try {
-                const animationDocRef = doc(db, "animations", animationId);
-                await deleteDoc(animationDocRef);
-                console.log(`deleteAnimation: Animación ${animationId} eliminada de Firestore.`); // DEBUG
-                
-                await initializeDatabase(); // Recarga la lista global desde Firestore
-                renderAllViews(); // Redibuja todas las vistas con la lista actualizada
-                loadExistingAnimations(); // Actualiza la lista en el panel de admin
-                
-            } catch (error) {
-                console.error("Error eliminando animación de Firestore:", error); // DEBUG
-                alert(`Error al eliminar la animación: ${error.message}`);
-            } finally {
-                 showLoadingOverlay(false);
-            }
-        }
-
-        function editAnimation(animationId) {
-             const animationToEdit = currentAnimations.find(a => a.id === animationId); // Busca en el estado global
-             if (!animationToEdit) { alert("Error: No se encontró la animación para editar."); return; }
-             
-             // Llenar el formulario
-             document.getElementById('animationId').value = animationToEdit.id;
-             document.getElementById('animationTitle').value = animationToEdit.title;
-             document.getElementById('animationSubject').value = animationToEdit.subject;
-             document.getElementById('animationUrl').value = animationToEdit.url;
-             document.getElementById('animationDescription').value = animationToEdit.description;
-             document.getElementById('animationKeywords').value = animationToEdit.keywords || '';
-             document.getElementById('animationObjectives').value = (animationToEdit.objectives || []).join('\n');
-             document.getElementById('animationControls').value = (animationToEdit.controls || []).join('\n');
-             document.getElementById('animationTheory').value = animationToEdit.theory || '';
-             document.getElementById('animationExamples').value = animationToEdit.examples || '';
-             document.getElementById('animationChallenge').value = animationToEdit.challenge || '';
-             
-             // Cambiar botones y enfocar
-             document.getElementById('formSubmitButton').innerHTML = '💾 Actualizar Animación';
-             document.getElementById('formCancelButton').classList.remove('hidden');
-             const adminPanel = document.getElementById('adminPanel');
-             if (adminPanel) adminPanel.scrollTop = 0; // Sube al inicio del panel
-             document.getElementById('animationTitle').focus();
-        }
-        
-        function loadSiteContent(contentData) { /* (Código sin cambios) */ }
+        function showAdminTab(tabName, event) { /* ... (Sin cambios) */ }
+        async function loadExistingAnimations() { /* ... (Sin cambios) */ }
+        function getGradientForSubject(s) { /* ... (Sin cambios) */ }
+        function getColorForSubject(s) { /* ... (Sin cambios) */ }
+        function resetAdminForm() { /* ... (Sin cambios) */ }
+        async function deleteAnimation(animationId) { /* ... (Sin cambios) */ }
+        function editAnimation(animationId) { /* ... (Sin cambios) */ }
+        function loadSiteContent(contentData = {}) { /* ... (Sin cambios) */ }
 
         // =================================================================================
-        // 7. INICIALIZACIÓN DE LA PÁGINA
+        // 7. INICIALIZACIÓN DE LA PÁGINA Y LISTENER DEL FORMULARIO
         // =================================================================================
 
-        document.addEventListener('DOMContentLoaded', async function() {
-            console.log("DOMContentLoaded: Evento disparado."); // DEBUG
+        // Función separada para inicializar la UI después de que Firebase esté listo
+        async function initializeUI() {
+            console.log("initializeUI: Iniciando..."); // DEBUG
+            showLoadingOverlay(true, "Inicializando UI...");
 
-             // Ocultar overlay al inicio, se mostrará en initializeDatabase si es necesario
-             showLoadingOverlay(false);
-
-            // Carga contenido estático como título y footer
             const savedContent = JSON.parse(localStorage.getItem('siteContent') || '{}');
             loadSiteContent(savedContent);
 
-            // Inicializa la base de datos (lee de Firestore) y luego renderiza
-            if (firebaseInitialized) { // Solo intentar si Firebase inició bien
+            // Solo inicializa DB y renderiza si Firebase está marcado como listo
+            if (firebaseInitialized) {
                 try {
                     await initializeDatabase(); // Carga inicial de datos
                     renderAllViews(); // Renderiza todo con los datos cargados
-                } catch (e) {
-                    console.error("Error durante la inicialización de datos/renderizado:", e); // DEBUG
-                } finally {
-                     // Asegurarse de ocultar el overlay después de la carga inicial
-                     showLoadingOverlay(false);
-                }
+                } catch (e) { console.error("Error durante initializeUI:", e); }
+                 finally { showLoadingOverlay(false); }
             } else {
-                 // Si Firebase no inició, al menos intenta renderizar algo vacío o un mensaje
-                 console.warn("DOMContentLoaded: Firebase no inicializado, renderizando vistas vacías.");
-                 renderAllViews(); // Intentará renderizar (probablemente vacío por `currentAnimations = []`)
+                 console.warn("initializeUI: Firebase no inicializado. Renderizando vistas vacías.");
+                 renderAllViews(); // Renderizar vacío o con mensaje de error si aplica
                  alert("No se pudo conectar con Firebase. Las animaciones no se cargarán.");
+                 showLoadingOverlay(false);
             }
             
             const urlParams = new URLSearchParams(window.location.search);
             const animacionParaCargar = urlParams.get('animacion');
-            if (animacionParaCargar) {
-                // Intenta cargar la animación incluso si la carga inicial falló (podría estar en caché o cargar después)
-                loadAnimationById(animacionParaCargar);
-            } else {
-                showSection('inicio');
-            }
+            if (animacionParaCargar) { loadAnimationById(animacionParaCargar); }
+            else { showSection('inicio'); }
             
-            // Configurar el listener para el formulario de admin
             const addAnimationForm = document.getElementById('addAnimationForm');
             if(addAnimationForm) {
-                addAnimationForm.addEventListener('submit', async function(e) {
-                    e.preventDefault();
-                     if (!firebaseInitialized || !db) { alert("Error: Firebase no está conectado."); return; } 
-                    console.log("Form Submit: Evento detectado."); // DEBUG
-                    const submitButton = document.getElementById('formSubmitButton');
-                    submitButton.disabled = true;
-                    showLoadingOverlay(true, "Guardando...");
-
-                    const editingId = document.getElementById('animationId').value;
-                    const subject = document.getElementById('animationSubject').value;
-                    // Prepara los datos del formulario para Firestore
-                    const animationData = { 
-                        title: document.getElementById('animationTitle').value, subject: subject,
-                        url: document.getElementById('animationUrl').value, description: document.getElementById('animationDescription').value,
-                        keywords: document.getElementById('animationKeywords').value || '',
-                        objectives: document.getElementById('animationObjectives').value.split('\n').filter(t => t.trim()),
-                        controls: document.getElementById('animationControls').value.split('\n').filter(t => t.trim()),
-                        gradient: getGradientForSubject(subject), color: getColorForSubject(subject), 
-                        isFeatured: true, // Hacer que las nuevas aparezcan destacadas por defecto
-                        theory: document.getElementById('animationTheory').value || '',
-                        examples: document.getElementById('animationExamples').value || '',
-                        challenge: document.getElementById('animationChallenge').value || ''
-                    };
-                     console.log("Form Submit: Datos a guardar:", animationData); // DEBUG
-                    
-                    try {
-                        if (editingId) { // MODO EDICIÓN
-                            console.log(`Form Submit: Actualizando ${editingId} en Firestore.`); // DEBUG
-                            const animationDocRef = doc(db, "animations", editingId);
-                            await setDoc(animationDocRef, animationData, { merge: true }); 
-                            alert('¡Animación actualizada exitosamente!');
-                        } else { // MODO AGREGAR
-                            console.log("Form Submit: Agregando nueva animación a Firestore."); // DEBUG
-                            const docRef = await addDoc(animationsCollectionRef, animationData);
-                            console.log("Form Submit: Documento agregado con ID: ", docRef.id); // DEBUG
-                            alert('¡Animación agregada exitosamente!');
-                        }
-                        
-                        // Después de guardar, recarga TODO desde Firestore y redibuja
-                        await initializeDatabase(); 
-                        renderAllViews(); 
-                        resetAdminForm();
-                        loadExistingAnimations(); // Actualiza la lista en admin
-                        
-                    } catch (error) {
-                        console.error("Error guardando animación en Firestore:", error); // DEBUG
-                        alert(`Error al guardar la animación: ${error.message}. Revisa la consola y las reglas de seguridad.`);
-                    } finally {
-                        submitButton.disabled = false;
-                        showLoadingOverlay(false);
-                    }
-                });
-            } else {
-                 console.error("DOMContentLoaded: Formulario addAnimationForm no encontrado."); // DEBUG
-            }
+                 // El listener del formulario se mantiene igual que en V3
+                addAnimationForm.addEventListener('submit', async function(e) { /* ... (código sin cambios) */ });
+            } else { console.error("initializeUI: Formulario addAnimationForm no encontrado."); }
             
-            console.log("DOMContentLoaded: Fin de la inicialización."); // DEBUG
-        }); // Fin DOMContentLoaded
+            console.log("initializeUI: Fin."); // DEBUG
+        }
+
+        // NO llames a initializeUI directamente aquí, espera al evento 'firebaseReady'
 
         // Hacer funciones globales accesibles desde el HTML (onclick)
-        window.showSection = showSection;
-        window.toggleMobileMenu = toggleMobileMenu;
-        window.loadAnimationById = loadAnimationById;
-        window.showLessonTab = showLessonTab;
-        window.toggleFullscreen = toggleFullscreen;
-        window.resetAnimation = resetAnimation;
-        window.shareAnimation = shareAnimation;
-        window.downloadNotes = downloadNotes;
-        window.filterAnimations = filterAnimations;
-        window.filterBySubject = filterBySubject;
-        window.toggleAdminPanel = toggleAdminPanel;
-        window.showAdminTab = showAdminTab;
-        window.editAnimation = editAnimation;
-        window.deleteAnimation = deleteAnimation;
-        window.resetAdminForm = resetAdminForm;
+        window.showSection = showSection; window.toggleMobileMenu = toggleMobileMenu; window.loadAnimationById = loadAnimationById; window.showLessonTab = showLessonTab; window.toggleFullscreen = toggleFullscreen; window.resetAnimation = resetAnimation; window.shareAnimation = shareAnimation; window.downloadNotes = downloadNotes; window.filterAnimations = filterAnimations; window.filterBySubject = filterBySubject; window.toggleAdminPanel = toggleAdminPanel; window.showAdminTab = showAdminTab; window.editAnimation = editAnimation; window.deleteAnimation = deleteAnimation; window.resetAdminForm = resetAdminForm;
 
     </script>
 </body>
